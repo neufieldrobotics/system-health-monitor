@@ -10,22 +10,28 @@ def generate_launch_description():
         DeclareLaunchArgument('period_sec', default_value='2.0',
                               description='Diagnostics publish period (seconds)'),
 
-        # Node: computer-level diagnostics publisher (wrapper)
         Node(
-            package='neuroam_monitoring',     # <-- your package name
-            executable='computer_monitor_node',  # <-- see setup.py entry_points below
+            package='system_health_monitor',
+            executable='computer_monitor',
             name='computer_monitor',
             output='screen',
             parameters=[{'period_sec': period}],
         ),
 
-        # Node: graph/required-topic monitor (your existing node)
         Node(
-            package='neuroam_monitoring',     # <-- same package (or change accordingly)
-            executable='node_monitor',        # <-- see setup.py entry_points below
-            name='node_monitor_diag',
+            package='system_health_monitor',
+            executable='node_monitor',
+            name='node_monitor',
             output='screen',
-            # If you add a param later (e.g., period), pass it here as well
-            # parameters=[{'period_sec': period}],
+            parameters=[{'period_sec': period}],
         ),
+
+        # We don't want image monitoring -- too expensive for little gain
+        # Node(
+        #     package='system_health_monitor',
+        #     executable='image_monitor',
+        #     name='image_monitor',
+        #     output='screen',
+        #     parameters=[{'period_sec': period}],
+        # ),
     ])
