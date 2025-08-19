@@ -1,84 +1,236 @@
-import psutil
-import ntplib
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os
+import socket
 import time
 import subprocess
+from typing import Optional, Dict
+
+import psutil
+import rclpy
 from rclpy.node import Node
-from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 
+# ==============================
+# Settings & thresholds
+# ==============================
+DEFAULT_PERIOD_SEC = 2.0
 
+CPU_WARN_PCT = 90.0
+MEM_WARN_PCT = 90.0
+DISK_WARN_PCT = 95.0
+
+GPU_WARN_UTIL = 90.0
+GPU_WARN_TEMP = 85.0
+CPU_WARN_TEMP = 85.0
+
+# NTP check is optional and DISABLED by default (safe offline)
+ENABLE_NTP_CHECK = False
+NTP_SERVER = "pool.ntp.org"
+NTP_TIMEOUT = 1.5  # seconds
+
+# ==============================
+# Status producer
+# ==============================
 class ComputerMonitor:
+    """
+    Produces a DiagnosticStatus with key system metrics.
+    Designed to be called periodically by a ROS 2 node.
+    """
     def __init__(self, node: Node):
         self.node = node
-        self.ntp_server = 'pool.ntp.org'
-        self.ntp_timeout = 2.0
         self.start_time = time.time()
+
+    # ---- Optional NTP (disabled unless ENABLE_NTP_CHECK=True) ----
+    def _get_ntp_offset(self) -> Optional[float]:
+        if not ENABLE_NTP_CHECK:
+            return None
+        try:
+            import ntplib  # lazy import; only if enabled
+            c = ntplib.NTPClient()
+            r = c.request(NTP_SERVER, version=3, timeout=NTP_TIMEOUT)
+            return float(r.offset)  # server_time - local_time (seconds)
+        except Exception:
+            return None
+
+    # ---- GPU stats: nvidia-smi (dGPU) or tegrastats (Jetson) ----
+    def _read_gpu_stats(self) -> Dict[str, Optional[float]]:
+        stats = {"util": None, "temp": None, "mem_used_pct": None}
+
+        # Try nvidia-smi first
+        try:
+            out = subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+                stderr=subprocess.DEVNULL,
+                timeout=1.0,
+            ).decode().strip()
+            util, temp, mem_used, mem_total = map(float, out.split(", "))
+            stats["util"] = util
+            stats["temp"] = temp
+            stats["mem_used_pct"] = 100.0 * mem_used / max(mem_total, 1.0)
+            return stats
+        except Exception:
+            pass
+
+        # Fallback: tegrastats (Jetson)
+        try:
+            out = subprocess.check_output(
+                ["tegrastats", "--interval", "1000", "--count", "1"],
+                stderr=subprocess.DEVNULL,
+                timeout=2.0,
+            ).decode()
+
+            util = None
+            temp = None
+
+            # Util: look for "GR3D_FREQ 23%@..."
+            toks = out.replace(",", " ").split()
+            if "GR3D_FREQ" in toks:
+                i = toks.index("GR3D_FREQ")
+                if i + 1 < len(toks) and "%" in toks[i + 1]:
+                    util = float(toks[i + 1].split("%")[0])
+
+            # Temp: token like "GPU@50.0C"
+            for t in toks:
+                if t.startswith("GPU@") and t.endswith("C"):
+                    try:
+                        temp = float(t.split("GPU@")[1].rstrip("C"))
+                    except Exception:
+                        pass
+
+            stats["util"] = util
+            stats["temp"] = temp
+            # mem_used_pct often not available on Jetson; leave None
+            return stats
+        except Exception:
+            return stats
+
+    def _first_cpu_temp(self) -> Optional[float]:
+        try:
+            temps = psutil.sensors_temperatures()
+            if not temps:
+                return None
+            # Try common keys; otherwise first sensor
+            for key in ("coretemp", "cpu-thermal", "x86_pkg_temp", "k10temp", "soc_thermal"):
+                if key in temps and temps[key]:
+                    return float(temps[key][0].current)
+            k = next(iter(temps))
+            if temps[k]:
+                return float(temps[k][0].current)
+        except Exception:
+            return None
+        return None
 
     def get_status(self) -> DiagnosticStatus:
         status = DiagnosticStatus()
-        status.name = "ComputerMonitor"
+        status.name = "computer_monitor"
         status.level = DiagnosticStatus.OK
         status.message = "OK"
 
-        # --- CPU Usage ---
+        # --- CPU ---
         cpu_percent = psutil.cpu_percent(interval=0.1)
-        status.values.append(KeyValue("CPU Usage (%)", f"{cpu_percent:.1f}"))
-        if cpu_percent > 90:
+        status.values.append(KeyValue("cpu_usage_pct", f"{cpu_percent:.1f}"))
+        if cpu_percent > CPU_WARN_PCT:
             status.level = DiagnosticStatus.WARN
             status.message = "High CPU usage"
 
-        # --- Memory Usage ---
+        # --- Memory ---
         mem = psutil.virtual_memory()
-        status.values.append(KeyValue("Memory Usage (%)", f"{mem.percent:.1f}"))
-        if mem.percent > 90:
-            status.level = DiagnosticStatus.WARN
-            status.message += " + High memory usage"
+        status.values.append(KeyValue("mem_usage_pct", f"{mem.percent:.1f}"))
+        if mem.percent > MEM_WARN_PCT:
+            status.level = max(status.level, DiagnosticStatus.WARN)
+            status.message = ("High memory usage" if status.message == "OK"
+                              else status.message + " + High memory usage")
 
-        # --- Disk Space ---
-        disk = psutil.disk_usage('/')
-        status.values.append(KeyValue("Disk Usage (%)", f"{disk.percent:.1f}"))
-        if disk.percent > 95:
-            status.level = DiagnosticStatus.WARN
-            status.message += " + Low disk space"
+        # --- Disk (root) ---
+        disk = psutil.disk_usage("/")
+        status.values.append(KeyValue("disk_root_usage_pct", f"{disk.percent:.1f}"))
+        if disk.percent > DISK_WARN_PCT:
+            status.level = max(status.level, DiagnosticStatus.WARN)
+            status.message = ("Low disk space" if status.message == "OK"
+                              else status.message + " + Low disk space")
 
-        # --- Network Stats ---
+        # --- Network counters ---
         net = psutil.net_io_counters()
-        status.values.append(KeyValue("Network Sent (MB)", f"{net.bytes_sent / 1e6:.1f}"))
-        status.values.append(KeyValue("Network Received (MB)", f"{net.bytes_recv / 1e6:.1f}"))
+        status.values.append(KeyValue("net_tx_mb", f"{net.bytes_sent / 1e6:.1f}"))
+        status.values.append(KeyValue("net_rx_mb", f"{net.bytes_recv / 1e6:.1f}"))
 
-        # --- Uptime ---
-        uptime = time.time() - self.start_time
-        status.values.append(KeyValue("Process Uptime (s)", f"{uptime:.0f}"))
+        # --- Process uptime ---
+        status.values.append(KeyValue("process_uptime_s", f"{time.time() - self.start_time:.0f}"))
 
-        # --- NTP Drift ---
+        # --- Optional NTP offset (safe when offline) ---
+        ntp_off = self._get_ntp_offset()
+        if ntp_off is None:
+            status.values.append(KeyValue("ntp_offset_s", "unavailable"))
+        else:
+            status.values.append(KeyValue("ntp_offset_s", f"{ntp_off:.3f}"))
+            # No WARN by default; you can add a threshold here if desired
 
+        # --- GPU ---
+        gpu = self._read_gpu_stats()
+        status.values.append(KeyValue("gpu_util_pct", "unavailable" if gpu["util"] is None else f"{gpu['util']:.1f}"))
+        status.values.append(KeyValue("gpu_temp_c", "unavailable" if gpu["temp"] is None else f"{gpu['temp']:.1f}"))
+        if gpu["mem_used_pct"] is not None:
+            status.values.append(KeyValue("gpu_mem_used_pct", f"{gpu['mem_used_pct']:.1f}"))
 
-        # --- GPU (if available) ---
-        try:
-            output = subprocess.check_output(['nvidia-smi', '--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total',
-                                              '--format=csv,noheader,nounits'])
-            util, temp, mem_used, mem_total = map(float, output.decode().strip().split(', '))
-            gpu_mem_pct = 100 * mem_used / mem_total
-            status.values.extend([
-                KeyValue("GPU Utilization (%)", f"{util:.1f}"),
-                KeyValue("GPU Temperature (C)", f"{temp:.1f}"),
-                KeyValue("GPU Memory Used (%)", f"{gpu_mem_pct:.1f}")
-            ])
-            if util > 90 or temp > 85:
-                status.level = DiagnosticStatus.WARN
-                status.message += " + High GPU load or temp"
-        except Exception:
-            status.values.append(KeyValue("GPU Info", "nvidia-smi not available"))
+        if (gpu["util"] is not None and gpu["util"] > GPU_WARN_UTIL) or \
+           (gpu["temp"] is not None and gpu["temp"] > GPU_WARN_TEMP):
+            status.level = max(status.level, DiagnosticStatus.WARN)
+            status.message = ("High GPU load/temp" if status.message == "OK"
+                              else status.message + " + High GPU load/temp")
 
-        # --- Thermal Monitoring (CPU Temp) ---
-        try:
-            temps = psutil.sensors_temperatures()
-            cpu_temp = temps.get('coretemp', [])[0].current if 'coretemp' in temps else None
-            if cpu_temp:
-                status.values.append(KeyValue("CPU Temperature (C)", f"{cpu_temp:.1f}"))
-                if cpu_temp > 85:
-                    status.level = DiagnosticStatus.WARN
-                    status.message += " + High CPU temperature"
-        except Exception as e:
-            status.values.append(KeyValue("Thermal Info", f"Unavailable: {e}"))
+        # --- CPU temperature ---
+        cpu_temp = self._first_cpu_temp()
+        status.values.append(KeyValue("cpu_temp_c", "unavailable" if cpu_temp is None else f"{cpu_temp:.1f}"))
+        if cpu_temp is not None and cpu_temp > CPU_WARN_TEMP:
+            status.level = max(status.level, DiagnosticStatus.WARN)
+            status.message = ("High CPU temp" if status.message == "OK"
+                              else status.message + " + High CPU temp")
 
         return status
+
+# ==============================
+# ROS 2 Node wrapper & main
+# ==============================
+class ComputerMonitorNode(Node):
+    def __init__(self):
+        super().__init__("computer_monitor")
+        self.declare_parameter("period_sec", DEFAULT_PERIOD_SEC)
+
+        self.monitor = ComputerMonitor(self)
+        self.diag_pub = self.create_publisher(DiagnosticArray, "diagnostics", 10)
+
+        self.hostname = socket.gethostname()
+        period = float(self.get_parameter("period_sec").get_parameter_value().double_value)
+        self.timer = self.create_timer(period, self._tick)
+
+        self.get_logger().info(f"ComputerMonitorNode running on {self.hostname}, period={period:.2f}s, ntp_enabled={ENABLE_NTP_CHECK}")
+
+    def _tick(self):
+        diag = DiagnosticArray()
+        diag.header.stamp = self.get_clock().now().to_msg()
+
+        status = self.monitor.get_status()
+        status.hardware_id = status.hardware_id or self.hostname
+
+        diag.status.append(status)
+        self.diag_pub.publish(diag)
+
+def main():
+    rclpy.init()
+    node = ComputerMonitorNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()
