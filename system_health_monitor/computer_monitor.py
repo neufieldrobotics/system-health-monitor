@@ -134,14 +134,14 @@ class ComputerMonitor:
 
         # --- CPU ---
         cpu_percent = psutil.cpu_percent(interval=0.1)
-        status.values.append(KeyValue("cpu_usage_pct", f"{cpu_percent:.1f}"))
+        status.values.append(KeyValue(key="cpu_usage_pct", value=f"{cpu_percent:.1f}"))
         if cpu_percent > CPU_WARN_PCT:
             status.level = DiagnosticStatus.WARN
             status.message = "High CPU usage"
 
         # --- Memory ---
         mem = psutil.virtual_memory()
-        status.values.append(KeyValue("mem_usage_pct", f"{mem.percent:.1f}"))
+        status.values.append(KeyValue(key="mem_usage_pct", value=f"{mem.percent:.1f}"))
         if mem.percent > MEM_WARN_PCT:
             status.level = max(status.level, DiagnosticStatus.WARN)
             status.message = ("High memory usage" if status.message == "OK"
@@ -149,7 +149,7 @@ class ComputerMonitor:
 
         # --- Disk (root) ---
         disk = psutil.disk_usage("/")
-        status.values.append(KeyValue("disk_root_usage_pct", f"{disk.percent:.1f}"))
+        status.values.append(KeyValue(key="disk_root_usage_pct", value=f"{disk.percent:.1f}"))
         if disk.percent > DISK_WARN_PCT:
             status.level = max(status.level, DiagnosticStatus.WARN)
             status.message = ("Low disk space" if status.message == "OK"
@@ -157,26 +157,26 @@ class ComputerMonitor:
 
         # --- Network counters ---
         net = psutil.net_io_counters()
-        status.values.append(KeyValue("net_tx_mb", f"{net.bytes_sent / 1e6:.1f}"))
-        status.values.append(KeyValue("net_rx_mb", f"{net.bytes_recv / 1e6:.1f}"))
+        status.values.append(KeyValue(key="net_tx_mb", value=f"{net.bytes_sent / 1e6:.1f}"))
+        status.values.append(KeyValue(key="net_rx_mb", value=f"{net.bytes_recv / 1e6:.1f}"))
 
         # --- Process uptime ---
-        status.values.append(KeyValue("process_uptime_s", f"{time.time() - self.start_time:.0f}"))
+        status.values.append(KeyValue(key="process_uptime_s", value=f"{time.time() - self.start_time:.0f}"))
 
         # --- Optional NTP offset (safe when offline) ---
         ntp_off = self._get_ntp_offset()
         if ntp_off is None:
-            status.values.append(KeyValue("ntp_offset_s", "unavailable"))
+            status.values.append(KeyValue(key="ntp_offset_s", value="unavailable"))
         else:
-            status.values.append(KeyValue("ntp_offset_s", f"{ntp_off:.3f}"))
+            status.values.append(KeyValue(key="ntp_offset_s", value=f"{ntp_off:.3f}"))
             # No WARN by default; you can add a threshold here if desired
 
         # --- GPU ---
         gpu = self._read_gpu_stats()
-        status.values.append(KeyValue("gpu_util_pct", "unavailable" if gpu["util"] is None else f"{gpu['util']:.1f}"))
-        status.values.append(KeyValue("gpu_temp_c", "unavailable" if gpu["temp"] is None else f"{gpu['temp']:.1f}"))
+        status.values.append(KeyValue(key="gpu_util_pct", value="unavailable" if gpu["util"] is None else f"{gpu['util']:.1f}"))
+        status.values.append(KeyValue(key="gpu_temp_c", value="unavailable" if gpu["temp"] is None else f"{gpu['temp']:.1f}"))
         if gpu["mem_used_pct"] is not None:
-            status.values.append(KeyValue("gpu_mem_used_pct", f"{gpu['mem_used_pct']:.1f}"))
+            status.values.append(KeyValue(key="gpu_mem_used_pct", value=f"{gpu['mem_used_pct']:.1f}"))
 
         if (gpu["util"] is not None and gpu["util"] > GPU_WARN_UTIL) or \
            (gpu["temp"] is not None and gpu["temp"] > GPU_WARN_TEMP):
@@ -186,7 +186,7 @@ class ComputerMonitor:
 
         # --- CPU temperature ---
         cpu_temp = self._first_cpu_temp()
-        status.values.append(KeyValue("cpu_temp_c", "unavailable" if cpu_temp is None else f"{cpu_temp:.1f}"))
+        status.values.append(KeyValue(key="cpu_temp_c", value="unavailable" if cpu_temp is None else f"{cpu_temp:.1f}"))
         if cpu_temp is not None and cpu_temp > CPU_WARN_TEMP:
             status.level = max(status.level, DiagnosticStatus.WARN)
             status.message = ("High CPU temp" if status.message == "OK"
