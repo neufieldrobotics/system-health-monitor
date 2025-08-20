@@ -21,6 +21,7 @@ NODE_NAMES: List[str] = [
     "/ublox_gps_node",
     "/vectornav",
     "/vn_sensor_msgs",
+    "/computer_monitor",
 ]
 
 # For nodes that must publish certain topics, list them here.
@@ -163,6 +164,7 @@ class NodeMonitor:
                 pub_topics = sorted([t for (t, _types) in pubs])
                 kv.append(KeyValue(key="visible", value="true"))
                 kv.append(KeyValue(key="publisher_count", value=str(len(pub_topics))))
+
 
                 missing_required = []
                 if node_fqn in MUST_HAVE_TOPICS:
