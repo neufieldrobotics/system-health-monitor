@@ -49,26 +49,29 @@ OUSTER_TOPICS = [
     "/ouster/range_image",
 ]
 VECTORNAV_TOPICS = [
-    "/vectornav/raw/common",
-    "/vectornav/raw/time",
-    "/vectornav/time_startup",
-    "/vectornav/time_gps",
-    "/vectornav/raw/imu",
-    "/vectornav/time_syncin",
-    "/vectornav/raw/gps",
-    "/vectornav/time_pps",
-    "/vectornav/imu",
-    "/vectornav/gnss",
-    "/vectornav/raw/attitude",
-    "/vectornav/imu_uncompensated",
     "/vectornav/raw/ins",
-    "/vectornav/magnetic",
+    "/vectornav/raw/gps",
+    "/vectornav/raw/attitude",
+    "/parameter_events",
     "/vectornav/raw/gps2",
-    "/vectornav/velocity_aiding",
+    "/vectornav/raw/time",
+    "/vectornav/raw/common",
+    "/vectornav/raw/imu",
+]
+VECTORNAV_SENSOR_TOPICS = [
     "/vectornav/temperature",
-    "/vectornav/pressure",
-    "/vectornav/velocity_body",
+    "/vectornav/time_gps",
     "/vectornav/pose",
+    "/vectornav/imu_uncompensated",
+    "/vectornav/time_pps",
+    "/vectornav/velocity_body",
+    "/vectornav/time_startup",
+    "/vectornav/imu",
+    "/vectornav/pressure",
+    "/vectornav/time_syncin",
+    "/vectornav/magnetic",
+    "/parameter_events",
+    "/vectornav/gnss",
 ]
 GPS_TOPICS = [
     "/ublox_gps_node/navpvt",
@@ -81,6 +84,7 @@ MUST_HAVE_TOPICS: Dict[str, List[str]] = {
     "/cam_sync": CAMERA_TOPICS,
     "/ouster/os_driver": OUSTER_TOPICS,
     "/vectornav": VECTORNAV_TOPICS,
+    "/vn_sensor_msgs": VECTORNAV_SENSOR_TOPICS,
     "/ublox_gps_node": GPS_TOPICS,
 }
 
@@ -138,7 +142,7 @@ class NodeMonitor:
     def _pubs_for_node(self, node_fqn: str) -> List[Tuple[str, List[str]]]:
         ns, name = self._split_fqn(node_fqn)
         try:
-            return self.node.get_publisher_names_and_types_by_node(name=name, namespace=ns)
+            return self.node.get_publisher_names_and_types_by_node(node_name=name, node_namespace=ns)
         except Exception as e:
             self.node.get_logger().warn(f"Could not get publishers for {node_fqn}: {e}")
             return []
