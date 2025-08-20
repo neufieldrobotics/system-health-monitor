@@ -151,7 +151,7 @@ class NodeMonitor:
 
         for node_fqn in NODE_NAMES:
             status = DiagnosticStatus()
-            status.name = f"node_monitor/{node_fqn}"
+            status.name = f"node_monitor/{node_fqn}".replace("//", "/")
             kv: List[KeyValue] = []
 
             if node_fqn in present_nodes:
@@ -216,7 +216,7 @@ class NodeMonitorNode(Node):
 
         show_topics = self.get_parameter("show_topics").get_parameter_value().bool_value
         self.monitor = NodeMonitor(self, show_topics=show_topics)
-        self.diag_pub = self.create_publisher(DiagnosticArray, "diagnostics", 10)
+        self.diag_pub = self.create_publisher(DiagnosticArray, "node/diagnostics", 10)
 
         period = float(self.get_parameter("period_sec").get_parameter_value().double_value)
         self.timer = self.create_timer(period, self._tick)

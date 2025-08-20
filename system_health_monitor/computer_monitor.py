@@ -203,7 +203,7 @@ class ComputerMonitorNode(Node):
         self.declare_parameter("period_sec", DEFAULT_PERIOD_SEC)
 
         self.monitor = ComputerMonitor(self)
-        self.diag_pub = self.create_publisher(DiagnosticArray, "diagnostics", 10)
+        self.diag_pub = self.create_publisher(DiagnosticArray, "computer/diagnostics", 10)
 
         self.hostname = socket.gethostname()
         period = float(self.get_parameter("period_sec").get_parameter_value().double_value)
